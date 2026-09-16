@@ -133,6 +133,8 @@ class _KanbanDispatcher:
         self.kb = kb
         self.settings = settings
         self.disabled_corrupt_boards: dict[str, tuple[tuple[str, int | None, int | None], float]] = {}
+        self._auto_decompose_board_offset = 0
+        self._auto_decompose_task_offsets: dict[str, int] = {}
 
     def _board_slugs(self) -> list:
         return _board_slugs(self.kb)
@@ -236,20 +238,29 @@ class _KanbanDispatcher:
         return False
 
     def auto_decompose_tick(self, auto_decompose_per_tick: int) -> int:
-        """Auto-decompose up to N triage tasks across all boards into ready workgraphs.
+        """Auto-decompose up to N triage tasks fairly across ticks and boards.
 
         Runs before dispatch fans out; the per-tick cap keeps a bulk triage
-        load from burst-spending the aux LLM. Returns the number decomposed.
+        load from burst-spending the aux LLM. In-memory cursors keep a stable
+        failing prefix from consuming that cap forever. Returns the number
+        decomposed.
         """
         try:
             from hermes_cli import kanban_decompose as _decomp
         except Exception as exc:  # pragma: no cover
             logger.warning("kanban auto-decompose: import failed (%s); skipping", exc)
             return 0
+        board_slugs = list(self._board_slugs())
+        if not board_slugs:
+            return 0
+        board_start = self._auto_decompose_board_offset % len(board_slugs)
+        ordered_slugs = board_slugs[board_start:] + board_slugs[:board_start]
+        self._auto_decompose_board_offset = (board_start + 1) % len(board_slugs)
+
         attempted = 0
         successes = 0
         with _default_profile_secret_scope():
-            for slug in self._board_slugs():
+            for slug in ordered_slugs:
                 if attempted >= auto_decompose_per_tick:
                     break
                 # Pin the board via env for the call: the decomposer connects
@@ -262,9 +273,17 @@ class _KanbanDispatcher:
                     except Exception as exc:
                         logger.debug("kanban auto-decompose: list_triage_ids failed on board %s (%s)", slug, exc)
                         triage_ids = []
-                    for tid in triage_ids:
-                        if attempted >= auto_decompose_per_tick:
-                            break
+                    if not triage_ids:
+                        self._auto_decompose_task_offsets.pop(slug, None)
+                        continue
+                    task_start = self._auto_decompose_task_offsets.get(slug, 0) % len(triage_ids)
+                    ordered_ids = triage_ids[task_start:] + triage_ids[:task_start]
+                    attempt_count = min(auto_decompose_per_tick - attempted, len(ordered_ids))
+                    selected_ids = ordered_ids[:attempt_count]
+                    self._auto_decompose_task_offsets[slug] = (
+                        task_start + attempt_count
+                    ) % len(triage_ids)
+                    for tid in selected_ids:
                         attempted += 1
                         successes += self._decompose_one(_decomp, slug, tid)
                 finally:
