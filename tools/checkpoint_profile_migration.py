@@ -1,8 +1,8 @@
 """Rekey profile-local checkpoint projects after a named profile directory moves.
 
 The checkpoint store itself lives under ``HERMES_HOME/checkpoints`` and therefore moves with a
-renamed profile.  Project identity inside that store is different: refs, metadata and the
-agent-write ledger are keyed by a hash of the absolute workdir.  A profile rename changes that
+renamed profile. Project identity inside that store is different: refs, metadata and the
+agent-write ledger are keyed by a hash of the absolute workdir. A profile rename changes that
 absolute path for every project beneath the profile home, so those entries must follow the move.
 """
 
@@ -85,7 +85,10 @@ def migrate_profile_checkpoint_projects(old_profile_dir: Path, new_profile_dir: 
             continue
         if not git_available:
             result["errors"] += 1
-            logger.warning("Cannot migrate checkpoint project %s after profile rename: git not found", old_workdir)
+            logger.warning(
+                "Cannot migrate checkpoint project %s after profile rename: git not found",
+                old_workdir,
+            )
             continue
 
         new_hash = cm._project_hash(str(new_workdir))
@@ -104,8 +107,11 @@ def migrate_profile_checkpoint_projects(old_profile_dir: Path, new_profile_dir: 
         if new_tip or new_meta.exists() or new_ledger.exists():
             result["errors"] += 1
             logger.warning(
-                "Cannot migrate checkpoint project %s -> %s after profile rename: target identity %s already exists",
-                old_workdir, new_workdir, new_hash,
+                "Cannot migrate checkpoint project %s -> %s after profile rename: "
+                "target identity %s already exists",
+                old_workdir,
+                new_workdir,
+                new_hash,
             )
             continue
 
@@ -119,7 +125,11 @@ def migrate_profile_checkpoint_projects(old_profile_dir: Path, new_profile_dir: 
             serialized_meta.pop("workdir_parent_ino", None)
 
         ledger = cm._read_json_dict(old_ledger) if old_ledger.exists() else None
-        rebased_ledger = _rebase_ledger_paths(ledger, old_workdir, new_workdir) if ledger is not None else None
+        rebased_ledger = (
+            _rebase_ledger_paths(ledger, old_workdir, new_workdir)
+            if ledger is not None
+            else None
+        )
 
         meta_tmp = ledger_tmp = None
         new_ref_created = False
@@ -146,10 +156,14 @@ def migrate_profile_checkpoint_projects(old_profile_dir: Path, new_profile_dir: 
             result["errors"] += 1
             logger.warning(
                 "Cannot migrate checkpoint project %s -> %s after profile rename: %s",
-                old_workdir, new_workdir, exc,
+                old_workdir,
+                new_workdir,
+                exc,
             )
-            cm._unlink_quiet(meta_tmp) if meta_tmp is not None else None
-            cm._unlink_quiet(ledger_tmp) if ledger_tmp is not None else None
+            if meta_tmp is not None:
+                cm._unlink_quiet(meta_tmp)
+            if ledger_tmp is not None:
+                cm._unlink_quiet(ledger_tmp)
             if installed_meta:
                 cm._unlink_quiet(new_meta)
             if installed_ledger:
