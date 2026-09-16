@@ -172,10 +172,18 @@ def migrate_profile_checkpoint_projects(old_profile_dir: Path, new_profile_dir: 
                 cm._delete_ref(store, new_ref)
             continue
 
-        # Target identity is complete. Source cleanup is deliberately last so any failure before
-        # this point leaves the old history intact for a retry.
+        # Delete the source ref only after the complete target identity exists. If that destructive
+        # step fails, roll the target back and leave the source metadata/ledger/index untouched so
+        # the standalone migrate-identity command can retry without merging two histories.
         if old_tip and not cm._delete_ref(store, old_ref):
-            logger.warning("Migrated checkpoint project but could not delete stale source ref %s", old_ref)
+            result["errors"] += 1
+            logger.warning("Could not delete source checkpoint ref %s after creating %s", old_ref, new_ref)
+            cm._unlink_quiet(new_meta)
+            cm._unlink_quiet(new_ledger)
+            if new_ref_created:
+                cm._delete_ref(store, new_ref)
+            continue
+
         cm._unlink_quiet(old_meta)
         cm._unlink_quiet(old_ledger)
         cm._unlink_quiet(old_index)
